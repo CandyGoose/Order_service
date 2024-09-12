@@ -1,23 +1,34 @@
-mod handlers;
-mod models;
+mod db;
 mod state;
+mod model;
+mod handlers;
 
-use actix_web::{web, App, HttpServer};
-use state::{AppState, example_order};
+use axum::{routing::get, Router};
+use std::sync::{Arc, Mutex};
+use sqlx::PgPool;
+use crate::state::AppState;
+use dotenv::dotenv;
+use std::env;
 
-#[actix_web::main]
-async fn main() -> std::io::Result<()> {
-    let orders = vec![example_order()];
-    let state = web::Data::new(AppState {
-        orders: std::sync::Mutex::new(orders),
-    });
+#[tokio::main]
+async fn main() {
+    env_logger::init();
+    dotenv().ok();
+    let db_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+    let db_pool = PgPool::connect(&*db_url).await.expect("Failed to connect to the database");
 
-    HttpServer::new(move || {
-        App::new()
-            .app_data(state.clone())
-            .service(handlers::get_order)
-    })
-        .bind("127.0.0.1:8080")?
-        .run()
+    let cache = Arc::new(Mutex::new(Vec::new()));
+    let app_state = AppState {
+        cache: Arc::clone(&cache),
+        db_pool,
+    };
+
+    let app = Router::new()
+        .route("/orders/:id", get(handlers::get_order_by_id))
+        .with_state(app_state);
+
+    axum::Server::bind(&"0.0.0.0:3000".parse().unwrap())
+        .serve(app.into_make_service())
         .await
+        .unwrap();
 }
